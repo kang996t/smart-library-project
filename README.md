@@ -1,21 +1,21 @@
 # 智慧图书馆数字资源平台
 
-本仓库用于完成基于 MongoDB 与 Python 的数据库管理系统期末项目。当前 `dev-A` 分支已完成成员 A 的前期开发基础：独立 Python 环境、MongoDB 只读连接封装、原始数据质量审计和命令行菜单框架。
+本仓库用于完成基于 MongoDB 与 Python 的数据库管理系统期末项目。当前 `dev-A` 分支已完成成员 A 的任务三单机环境实现，包括专用 MongoDB 实例、基础数据初始化、检索与统计、索引执行计划实验以及三类账号权限控制；任务四及 GridFS、副本集、分片集群不在本阶段范围内。
 
-本阶段不会创建 `smart_library` 数据库、集合或索引，不会导入数据、配置账号权限或执行 GridFS 上传，也不会修改原有 `library` 数据库。
+## 任务三实现概览
 
-## 当前实现
-
-- `src/mongodb_connect.py`：统一读取环境变量、创建 `MongoClient`、执行只读 `ping`、区分服务器可达性与目标数据库是否存在，并可靠关闭连接。
-- `scripts/check_data.py`：审计三份业务数据的解析、规模、字段、类型、缺失值、唯一性、引用关系、日期和 GridFS 文件清单。
-- `src/main.py`：提供 8 项功能菜单、循环分发、非法输入处理、异常边界和正常退出；业务功能目前明确标记为待开发。
-- `docs/data_quality_report.md`：由审计脚本基于当前原始文件生成的真实结果。
+- MongoDB 8.0.32 独立单机实例，数据目录为 `/var/lib/smart_library_mongo`，服务端口为 `27018`。
+- `smart_library` 包含 `books`、`readers`、`borrow_logs`、`audit_logs` 和 `stat_result` 五个普通集合。
+- 已导入 `books` 50 条、`readers` 30 条、`borrow_logs` 3000 条；日期字符串在导入时转换为 Python `datetime`，写入 MongoDB 后对应 BSON Date。
+- 六类检索、五项统计、两组索引前后执行计划对比以及三类账号权限边界均已完成并留存真实执行记录。
+- 阶段文档位于 `docs/任务3_单机环境实现_阶段交付.md` 和 `docs/任务3_单机环境实现_初稿.docx`，证据定位见 `docs/任务3_证据清单.md`。
 
 ## 环境要求
 
-- Python 3.13（当前验证版本为 3.13.5）
-- PyMongo 4.x（当前验证版本为 4.19.0）
-- MongoDB 本地服务；默认地址为 `mongodb://localhost:27017/`
+- Python 3.13
+- PyMongo 4.x
+- python-dotenv
+- MongoDB 8.0.x 单机实例
 
 Windows PowerShell 初始化方式：
 
@@ -23,65 +23,73 @@ Windows PowerShell 初始化方式：
 py -3.13 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
+Copy-Item config\.env.example config\.env
 ```
 
-本仓库已创建 `.venv` 并通过 `.gitignore` 排除，不应提交虚拟环境文件。
+`config/.env` 会由各任务三脚本自动加载，并已被 Git 忽略。请在本地填写专用实例地址和三类账号密码，不要将真实凭据写入源码、README 或 `.env.example`。
 
-## MongoDB 配置与只读检查
+## 推荐执行顺序
 
-程序直接读取环境变量，不会自动加载本地 `.env` 文件。可参考 `config/.env.example` 在 PowerShell 或 PyCharm 运行配置中设置：
+以下顺序用于从空白单机实例复现任务三。当前已确认通过的实验环境无需重复执行。
 
 ```powershell
-$env:MONGODB_URI = "mongodb://localhost:27017/"
-$env:MONGODB_DB_NAME = "smart_library"
-python src\mongodb_connect.py
+python scripts\init_database.py
+python scripts\import_data.py
+python scripts\task3_queries.py
+python scripts\task3_statistics.py
+python scripts\task3_indexes.py
+python scripts\task3_create_users.py
 ```
 
-若不设置环境变量，将使用上述默认值。连接检查只执行 `ping` 和数据库列表读取；即使 `smart_library` 尚不存在也不会创建它。
+创建账号后，在 MongoDB 配置文件中启用 `security.authorization: enabled` 并按运维流程重启专用实例，再执行权限验证：
 
-## 数据审计
+```powershell
+python scripts\task3_verify_permissions.py
+```
 
-执行审计并刷新 Markdown 报告：
+`task3_indexes.py` 为执行计划实验脚本，会删除脚本清单中的业务索引、采集无索引执行计划，然后重建全部业务索引并采集优化后结果。它不删除集合或业务数据，但会短暂改变索引状态，因此不要在已验收环境中仅为重复验证而再次运行。
+
+## 连接与认证
+
+`src/mongodb_connect.py` 和任务三脚本优先读取 `config/.env`。认证未启用时可使用基础 URI：
+
+```text
+mongodb://<mongo-host>:27018/
+```
+
+认证启用后，普通查询或管理脚本必须使用具有相应权限的账号，并指定 `authSource=smart_library`。`task3_verify_permissions.py` 会分别使用 `libReader`、`libWriter` 和 `libAdmin` 验证查询、写入及索引管理边界，不会输出密码。
+
+## 任务三脚本
+
+- `src/mongodb_connect.py`：统一加载连接配置、执行只读 `ping` 并管理客户端生命周期。
+- `scripts/init_database.py`：按需创建五个集合，不删除或覆盖已有数据。
+- `scripts/import_data.py`：导入三份基础数据，转换日期类型，并校验集合数量。
+- `scripts/task3_queries.py`：执行六类检索并生成真实查询记录。
+- `scripts/task3_statistics.py`：执行五项统计，分类结果以 upsert 方式写入 `stat_result`。
+- `scripts/task3_indexes.py`：创建任务二规划的索引并生成两组前后执行计划对比。
+- `scripts/task3_create_users.py`：创建只读、读写和数据库管理三类账号。
+- `scripts/task3_verify_permissions.py`：验证三类账号的权限边界，并清理验证时创建的临时记录或索引。
+
+## 数据审计与命令行框架
+
+原始数据可通过以下命令做只读质量审计：
 
 ```powershell
 python scripts\check_data.py --report docs\data_quality_report.md
 ```
 
-脚本只读取 `data` 目录，不修改原始业务数据或 `gridfs_files` 中的资源。存在解析错误、关键字段错误、主标识冲突、引用缺失或文件不一致时返回非零退出码；普通质量警告默认不阻断执行，可增加 `--strict` 将警告视为失败。
-
-## 命令行应用
-
-```powershell
-python src\main.py
-```
-
-菜单包含：
-
-1. 图书检索与管理
-2. 读者管理
-3. 借阅记录查询
-4. 分类统计
-5. 学院借阅排行
-6. 年月借阅趋势
-7. 热门图书排行
-8. GridFS 数字资源管理
-
-当前仅实现应用框架，选择任一业务项都会显示“待开发”，不会返回模拟结果，也不依赖业务数据库已经初始化。后续模块可通过 `SmartLibraryCLI` 的 `handlers` 参数注入对应处理函数。
+`src/main.py` 仍是后续任务的命令行菜单框架。本阶段没有实现或修改 `book_manager.py`、`reader_manager.py`、`borrow_manager.py`、`stat_manager.py`、GridFS 或集群部署功能。
 
 ## 项目结构
 
 ```text
 smart-library-project/
-├─ config/       连接配置示例
-├─ data/         原始业务数据与 GridFS 测试资源
-├─ docs/         审计报告及后续项目文档
-├─ evidence/     后续实验截图
-├─ scripts/      数据审计及后续可复现脚本
-├─ src/          Python 应用源码
+├─ config/       本地连接配置示例
+├─ data/         原始业务数据与后续 GridFS 测试资源
+├─ docs/         任务三执行记录、阶段文档和证据清单
+├─ evidence/     任务三实验截图
+├─ scripts/      数据审计与任务三可复现脚本
+├─ src/          连接封装和后续应用框架
 ├─ requirements.txt
 └─ README.md
 ```
-
-## 后续开发依赖
-
-成员 C 完成并冻结集合名称、字段类型、可选字段规则、`borrow_logs` 集合类型及索引清单后，成员 A 才能继续开展正式建库、数据导入、查询统计、索引优化、账号权限和业务管理模块。GridFS 上传、下载、元数据与主菜单联调依赖成员 C 提供的 `gridfs_manager.py` 接口。

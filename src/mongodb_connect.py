@@ -8,12 +8,17 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Final
 
+from dotenv import load_dotenv
 from pymongo import MongoClient
 from pymongo.errors import OperationFailure, PyMongoError
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+ENV_FILE = PROJECT_ROOT / "config" / ".env"
 
+load_dotenv(ENV_FILE)
 DEFAULT_MONGODB_URI: Final = "mongodb://localhost:27017/"
 DEFAULT_DATABASE_NAME: Final = "smart_library"
 DEFAULT_SERVER_SELECTION_TIMEOUT_MS: Final = 3_000

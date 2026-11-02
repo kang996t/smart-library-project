@@ -199,6 +199,7 @@ cython_debug/
 downloads/
 tmp/
 temp/
+.codex_task3_work/
 *.tmp
 Thumbs.db
 .DS_Store
