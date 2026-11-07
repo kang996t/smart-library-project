@@ -2,9 +2,10 @@
 #!/bin/bash
 set -euo pipefail
 
-LAB=/opt/smart-library-b
-MONGOD=/export/servers/mongodb-8.3.11/bin/mongod
-MONGOSH=/export/servers/mongosh-2.12.0/bin/mongosh
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=member_b_common.sh
+source "$SCRIPT_DIR/member_b_common.sh"
+failures=0
 
 echo "========== Smart Library Environment Check =========="
 
@@ -12,13 +13,19 @@ echo "OS:"
 grep PRETTY_NAME /etc/os-release
 
 echo "MongoDB:"
+require_executable "$MONGOD"
 "$MONGOD" --version | head -n 1
 
 echo "Mongosh:"
+require_executable "$MONGOSH"
 "$MONGOSH" --version
 
 echo "========== User Check =========="
-id mongolab
+if id "$MONGO_SERVICE_USER"; then
+    echo "SERVICE_USER: PASS"
+else
+    failures=$((failures + 1))
+fi
 
 echo "========== Directory Check =========="
 
@@ -37,6 +44,7 @@ do
         echo "EXISTS: $dir"
     else
         echo "MISSING: $dir"
+        failures=$((failures + 1))
     fi
 done
 
@@ -50,6 +58,7 @@ do
         stat -c "%U %G %a %n" "$file"
     else
         echo "MISSING: $file"
+        failures=$((failures + 1))
     fi
 done
 
@@ -64,3 +73,8 @@ for port in 27117 27118 27119 27219 27211 27212 27200; do
 done
 
 echo "========== ENVIRONMENT_CHECK_COMPLETE =========="
+if [ "$failures" -gt 0 ]; then
+    echo "ENVIRONMENT_CHECK_FAIL count=$failures"
+    exit 1
+fi
+echo "ENVIRONMENT_CHECK_PASS"

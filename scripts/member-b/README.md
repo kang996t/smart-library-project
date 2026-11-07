@@ -1,136 +1,154 @@
-MongoDB cluster startup and health-check scripts
 # Member B - MongoDB Infrastructure Scripts
 
-## 1. Overview
+This directory contains the reproducible deliverables for Task 5 (three-node
+replica set) and Member B's infrastructure portion of Task 6 (sharded cluster).
+The scripts target CentOS Stream 10, MongoDB 8.3.11, mongosh 2.12.0, service
+user `mongolab`, and lab root `/opt/smart-library-b`.
 
-This directory contains the infrastructure management scripts developed by Member B for the Smart Library Digital Resource Platform.
+## Safety and credentials
 
-The scripts support environment verification, MongoDB sharded cluster startup, shutdown, and health checking.
+- Run process-management scripts as `root`; MongoDB processes are launched as
+  `mongolab`.
+- Keep administrator passwords and keyfiles outside Git. Export credentials in
+  the current shell only when an authenticated command is required.
+- Destructive drills require an explicit confirmation environment variable.
+- Test writes use `library_b_test`, not the formal `smart_library` database.
 
-**Environment:**
-- Operating System: CentOS Stream 10
-- MongoDB Server: 8.3.11
-- MongoDB Shell: 2.12.0
-- Service User: mongolab
-- Project Directory: `/opt/smart-library-b`
+Example local environment setup (do not commit real values):
 
-## 2. Script Files
+```bash
+export MONGO_ADMIN_USER='your_admin'
+export MONGO_ADMIN_PASSWORD='your_local_password'
+```
 
-| Script | Description |
+## Configuration installation
+
+The repository templates live under `config/member-b/`; runtime configuration
+files live under `/opt/smart-library-b/config/`.
+
+```bash
+# Preview only
+sudo bash scripts/member-b/install_templates.sh --dry-run
+
+# Apply, preserving replaced files in a timestamped backup directory
+sudo bash scripts/member-b/install_templates.sh --apply
+```
+
+## Task 5 - replica set
+
+Ports and roles:
+
+| Node | Port | Priority | Runtime config |
+|---|---:|---:|---|
+| Node 1 | 27117 | 2 | `/opt/smart-library-b/config/node1.conf` |
+| Node 2 | 27118 | 1 | `/opt/smart-library-b/config/node2.conf` |
+| Node 3 | 27119 | 1 | `/opt/smart-library-b/config/node3.conf` |
+
+Recommended order:
+
+```bash
+sudo bash scripts/member-b/init_environment.sh
+sudo bash scripts/member-b/start_replica.sh
+
+# First initialization; credentials are optional only before the first admin exists.
+sudo -E bash scripts/member-b/bootstrap_replica.sh
+
+bash scripts/member-b/check_replica.sh
+```
+
+Controlled failover and member-change drills:
+
+```bash
+export ALLOW_FAILOVER_DRILL=YES
+sudo -E bash scripts/member-b/failover_drill.sh | tee task5-failover.log
+
+export ALLOW_RS_RECONFIG=YES
+bash scripts/member-b/member_change_drill.sh | tee task5-member-change.log
+```
+
+Application-level continuity probe (run in a second terminal before the
+failover drill):
+
+```bash
+python3 -m pip install -r scripts/member-b/requirements.txt
+export SMART_LIBRARY_REPLICA_URI='mongodb://USER:PASSWORD@127.0.0.1:27117,127.0.0.1:27118,127.0.0.1:27119/?replicaSet=libraryRS&authSource=admin&readPreference=secondaryPreferred&retryWrites=true&w=majority'
+PROBE_DURATION_SECONDS=120 \
+  python3 scripts/member-b/replica_failover_probe.py | tee task5-application-probe.jsonl
+```
+
+The probe records every successful or failed driver operation, the selected
+primary, latency, and the final success/failure totals. Use its JSONL output
+together with `failover_drill.sh` timestamps as the missing application-impact
+evidence.
+
+Shutdown:
+
+```bash
+sudo bash scripts/member-b/stop_replica.sh
+```
+
+## Task 6 - sharded-cluster infrastructure
+
+| Component | Replica set | Port | Runtime config |
+|---|---|---:|---|
+| Config Server | `configRS` | 27219 | `configsvr.conf` |
+| Shard 1 | `shard1RS` | 27211 | `shard1.conf` |
+| Shard 2 | `shard2RS` | 27212 | `shard2.conf` |
+| mongos | router | 27200 | `mongos.conf` |
+
+Recommended order:
+
+```bash
+sudo bash scripts/member-b/start_cluster.sh
+sudo -E bash scripts/member-b/bootstrap_sharded_cluster.sh
+bash scripts/member-b/check_cluster.sh
+bash scripts/member-b/verify_cluster_acceptance.sh | tee task6-infrastructure-acceptance.log
+```
+
+The bootstrap script initializes the three single-member replica sets and
+registers `shard1RS` and `shard2RS` idempotently. The acceptance script checks
+process identity, ports, ping, authenticated mongos identity, Config Server
+identity, and both registered shards.
+
+Shutdown and recovery:
+
+```bash
+sudo bash scripts/member-b/stop_cluster.sh
+sudo bash scripts/member-b/start_cluster.sh
+bash scripts/member-b/verify_cluster_acceptance.sh
+```
+
+Member C owns the business-data portion after this handoff: shard-key analysis,
+enabling sharding for `borrow_logs`, importing or migrating 3000 records,
+verifying distribution, and comparing targeted with scatter-gather queries.
+
+## Script inventory
+
+| File | Purpose |
 |---|---|
-| `init_environment.sh` | Checks the operating system, MongoDB versions, service user, directories, keyfiles, and port availability. |
-| `start_cluster.sh` | Starts Config Server, Shard 1, Shard 2, and mongos in sequence, with ping verification. |
-| `stop_cluster.sh` | Stops mongos, Shard 2, Shard 1, and Config Server in reverse order. |
-| `check_cluster.sh` | Checks service ports, MongoDB ping responses, system information, and memory usage. |
+| `member_b_common.sh` | Shared process, port, ping, auth, and safety helpers |
+| `init_environment.sh` | Strict environment, directory, keyfile, and port preflight |
+| `install_templates.sh` | Dry-run/apply installation of repository configuration templates |
+| `start_replica.sh` / `stop_replica.sh` | Identity-checked replica process lifecycle |
+| `bootstrap_replica.sh` | Idempotent `libraryRS` initialization and optional admin creation |
+| `check_replica.sh` | Strict three-node topology and sample-data acceptance |
+| `failover_drill.sh` | Timed PRIMARY stop, election, majority write/read, and node recovery |
+| `member_change_drill.sh` | Guarded Node 3 remove/re-add and SECONDARY recovery check |
+| `replica_failover_probe.py` | PyMongo read/write continuity evidence during failover |
+| `start_cluster.sh` / `stop_cluster.sh` | Identity-checked sharded-cluster lifecycle |
+| `bootstrap_sharded_cluster.sh` | Config/shard initialization, admin setup, and shard registration |
+| `check_cluster.sh` | Routine component health and optional topology check |
+| `verify_cluster_acceptance.sh` | Strict authenticated Task 6 infrastructure acceptance |
 
-## 3. MongoDB Cluster Configuration
+## Expected evidence outputs
 
-| Component | Port | Configuration |
-|---|---:|---|
-| Config Server | 27219 | `config/configsvr.conf` |
-| Shard 1 | 27211 | `config/shard1.conf` |
-| Shard 2 | 27212 | `config/shard2.conf` |
-| mongos Router | 27200 | `config/mongos.conf` |
+Retain terminal output or screenshots that clearly include these markers:
 
-The cluster contains two registered shards:
+- `REPLICA_ACCEPTANCE_PASS`
+- `ELECTION_SECONDS=<number>` and `FAILOVER_DRILL_PASS`
+- `MEMBER_CHANGE_DRILL_PASS`
+- probe records with both `probe_start` and `probe_end`
+- `SHARDED_CLUSTER_BOOTSTRAP_COMPLETE`
+- `SHARDED_CLUSTER_ACCEPTANCE_PASS`
 
-- `shard1RS`: `localhost:27211`
-- `shard2RS`: `localhost:27212`
-
-The replica set configuration is maintained separately under `config/member-b/replica/`.
-
-## 4. Usage
-
-Run the following commands as the root user on the CentOS server.
-
-### 4.1 Environment Check
-
-```bash
-bash /opt/smart-library-b/handoff/github/scripts/member-b/init_environment.sh
-```
-
-### 4.2 Start the Cluster
-
-```bash
-bash /opt/smart-library-b/handoff/github/scripts/member-b/start_cluster.sh
-```
-
-The startup sequence is:
-
-1. Config Server
-2. Shard 1
-3. Shard 2
-4. mongos Router
-
-Each component is checked using a MongoDB ping command.
-
-### 4.3 Check Cluster Health
-
-```bash
-bash /opt/smart-library-b/handoff/github/scripts/member-b/check_cluster.sh
-```
-
-The script checks whether all four components are running and responding to ping requests.
-
-### 4.4 Stop the Cluster
-
-```bash
-bash /opt/smart-library-b/handoff/github/scripts/member-b/stop_cluster.sh
-```
-
-The shutdown sequence is:
-
-1. mongos Router
-2. Shard 2
-3. Shard 1
-4. Config Server
-
-The shutdown script stops the corresponding MongoDB processes without deleting database files.
-
-## 5. Verification Results
-
-The following tests were completed:
-
-- Environment inspection completed.
-- All four MongoDB components started successfully.
-- All four components returned successful ping responses.
-- The shutdown script completed successfully.
-- All four service ports were confirmed stopped after shutdown.
-- Existing WiredTiger data files remained present.
-- The startup script successfully restarted the cluster.
-- Both registered shards remained available after restart.
-- The cluster startup script returned exit code 0.
-
-The registered shard information after restart was verified through:
-
-```javascript
-db.adminCommand({ listShards: 1 })
-```
-
-Expected registered shards:
-
-- `shard1RS`
-- `shard2RS`
-
-## 6. Important Notes
-
-1. Run the scripts on the configured CentOS server.
-2. The MongoDB service processes run under the `mongolab` account.
-3. The management scripts should be executed by root.
-4. The environment check script performs inspection only; it does not initialize or recreate the database environment.
-5. Do not delete or regenerate existing database data directories or authentication keyfiles during routine recovery.
-6. Do not upload authentication keyfiles, passwords, or database files to GitHub.
-7. Coordinate cluster shutdown with other team members before executing the shutdown script.
-
-## 7. Member B Responsibilities
-
-Member B is responsible for:
-
-- MongoDB replica set infrastructure.
-- MongoDB sharded cluster deployment.
-- Config Server and shard configuration.
-- Cluster startup and shutdown scripts.
-- Infrastructure health checks.
-- Deployment evidence and GitHub documentation.
-
-**Status:** Core infrastructure deployment, shutdown, restart, and shard registration recovery verification completed.
+Do not treat source-code presence or a syntax check as runtime evidence.
