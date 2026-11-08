@@ -12,7 +12,7 @@
 |---|---|
 | 仓库 | `kang996t/smart-library-project` |
 | 分支 | `member-b-infrastructure` |
-| 最新交付提交 | `cdbf88b705c760ae0cd8405c91b759d28410e993` |
+| 核心实现基线提交 | `cdbf88b705c760ae0cd8405c91b759d28410e993` |
 | 提交说明 | `Complete Member B replica and sharded cluster deliverables` |
 | Pull Request | `#1 Member B: MongoDB Replica Set and Sharded Cluster Infrastructure` |
 | 同步验证 | 本地与远端哈希一致，已取得 `PUSH_VERIFIED` |
@@ -117,4 +117,3 @@ git pull --ff-only origin main
 - **成员 B 配置、脚本和文档：完成。**
 - **最终虚拟机新增 PASS 证据：待补。**
 - **成员 C 业务分片实验与表 6-3：待成员 C 完成。**
-
